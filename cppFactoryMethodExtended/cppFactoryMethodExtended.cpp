@@ -1,294 +1,281 @@
 #include <iostream>
 #include <vector>
-#include <fstream>
 #include <GL/freeglut.h>
-#include <cmath>
 
-enum SignalType
+//TYPEDEFS
+typedef std::vector<float> fVector;
+struct dataPoint { float x, y; };
+typedef std::vector<dataPoint> dpVector;
+
+//ENUMS
+enum signalType
 {
-	SIG_Sinusoid,
-	SIG_Linear,
-	SIG_Quadratic,
-	SIG_Cubic
+	ST_Sin,
+	ST_Lin,
+	ST_Quad,
+	ST_Cub
 };
 
-struct point
+//SIGNAL GENERATION
+class signalGen
 {
-	float x, y;
+private:
+	float vArg;
+	fVector coeffs;
+public:
+	//getters and setters
+	float getArg() { return vArg; }
+	void setArg(float val) { vArg = val; }
+
+	virtual fVector getCoeffs() { return coeffs; }
+	virtual void setCoeffs(fVector val)
+	{
+		coeffs.clear(); coeffs = val;
+	}
+
+	float calcSignalVal() { return calcSignal(getArg(), getCoeffs()); }
+
+	//factory components
+	virtual float calcSignal(float arg, fVector c) = 0;
+	static signalGen* Create(signalType st);
+};
+
+class sgSin : public signalGen
+{
+	float calcSignal(float arg, fVector c)
+	{
+		if (c.size() >= 4)
+			return c[0] * sin(c[1] * arg + c[2]) + c[3];
+		else
+			return 0;
+	}
+};
+
+class sgLin : public signalGen
+{
+	float calcSignal(float arg, fVector c)
+	{
+		if (c.size() >= 2)
+			return c[0] * arg + c[1];
+		else
+			return 0;
+	}
+};
+
+
+class sgQuad : public signalGen
+{
+	float calcSignal(float arg, fVector c)
+	{
+		if (c.size() >= 3)
+			return c[0] * pow(arg, 2) + c[1] * arg + c[2];
+		else
+			return 0;
+	}
+};
+
+class sgCub : public signalGen
+{
+	float calcSignal(float arg, fVector c)
+	{
+		if (c.size() >= 4)
+			return c[0] * pow(arg, 3) + c[1] * pow(arg, 2) + c[2] * arg + c[3];
+		else
+			return 0;
+	}
+};
+
+signalGen * signalGen::Create(signalType st)
+{
+	switch (st)
+	{
+	case ST_Sin:
+		return new sgSin();
+		break;
+	case ST_Lin:
+		return new sgLin();
+		break;
+	case ST_Quad:
+		return new sgQuad();
+		break;
+	case ST_Cub:
+		return new sgCub();
+		break;
+	default:
+		return NULL;
+		break;
+	}
+}
+
+//data management
+class dataGen
+{
+private:
+	float xMin, xMax, yMin, yMax;
+	int nSteps;
+	dpVector dataSet;
+	std::vector<signalGen*> genSet;
+public:
+	//polymorphic constructors
+	dataGen()
+	{
+		xMin = -10;
+		xMax = 10;
+		nSteps = 100;
+	}
+	dataGen(float xMn, float xMx, int ns)
+	{
+		xMin = xMn;
+		xMax = xMx;
+		nSteps = ns;
+	}
+
+	dpVector getDataSet() { return dataSet; }
+	float getXMin() { return xMin; }
+	float getXMax() { return xMax; }
+	float getYMin() { return yMin; }
+	float getYMax() { return yMax; }
+
+	void addGenerator(signalType st, fVector coeffs)
+	{
+		genSet.push_back(signalGen::Create(st));
+		genSet[genSet.size() - 1]->setCoeffs(coeffs);
+	}
+
+	void genData()
+	{
+		dataSet.resize(nSteps + 1);
+		int ng = genSet.size(); //amount of generators
+		float dataStep = (xMax - xMin) / nSteps;
+
+		for (int i = 0; i <= nSteps; i++)
+		{
+			float cx = xMin + i * dataStep;
+			float cy = 0;
+			for (int j = 0; j < ng; j++)
+			{
+				genSet[j]->setArg(cx);
+				cy += genSet[j]->calcSignalVal();
+			}
+			dataSet[i] = { cx, cy };
+		}
+	}
+
+	void extractExtremes()
+	{
+		yMin = dataSet[0].y;
+		yMax = dataSet[0].y;
+		for (dataPoint cp : dataSet)
+		{
+			if (cp.y > yMax) yMax = cp.y;
+			if (cp.y < yMin) yMin = cp.y;
+		}
+	}
 };
 
 class Singleton
 {
 private:
-	//pointer to a Singleton instance
-	static Singleton *instance;
-	//private constructor
-	Singleton()
-	{
-		data.clear();
-	}
-
-	//data fields
-	std::vector<point> data;
-
+	static Singleton * instance;
+	Singleton() {}
 public:
-	//getters and setters
-	std::vector<point> getData() { return data; }
-	void setData(std::vector<point> val) { data = val; }
-
-	void findDataExtremes(float &xmin, float &xmax, float &ymin, float &ymax)
-	{
-		int l = data.size();
-		xmin = data[0].x;
-		xmax = data[l - 1].x;
-		ymin = data[0].y;
-		ymax = data[0].y;
-		for (int i = 0; i < l; i++)
-		{
-			if (data[i].y > ymax) ymax = data[i].y;
-			if (data[i].y < ymin) ymin = data[i].y;
-		}
-	}
-
-	//constructor returns static instance by pointer
+	dataGen * refDG;
 	static Singleton *getInstance()
 	{
 		if (!instance)
 			instance = new Singleton;
 		return instance;
 	}
-};
+} *Singleton::instance = 0;
 
-//Singleton intialization to null
-Singleton *Singleton::instance = 0;
 
-//signal gen and children
-class signalGen
-{
-public:
-	float vArg; 
-	std::vector<float>vC;
-	void setupCalc(float arg, std::vector<float>c)
-	{
-		vArg = arg;
-		vC = c;
-	}
-	void setArg(float val) { vArg = val; }
-	point calcSigPoint()
-	{
-		return { vArg, calcSignal(vArg, vC) };
-	}
-	virtual float calcSignal(float arg, std::vector<float>c) = 0;
-	static signalGen* Create(SignalType signal);
-};
-
-class sgSin :public signalGen
-{
-	float calcSignal(float arg, std::vector<float>c)
-	{
-		return c[0] * sin(c[1]*arg + c[2]);
-	}
-};
-
-class sgLin:public signalGen
-{
-	float calcSignal(float arg, std::vector<float>c)
-	{
-		return c[0] * arg + c[1];
-	}
-};
-
-class sgQuad :public signalGen
-{
-	float calcSignal(float arg, std::vector<float>c)
-	{
-		return c[0] * pow(arg,2) + c[1]*arg + c[2];
-	}
-};
-
-class sgCub :public signalGen
-{
-	float calcSignal(float arg, std::vector<float>c)
-	{
-		return c[0] * pow(arg,3) + c[1]*pow(arg,2) + c[2]*arg + c[3];
-	}
-};
-
-signalGen * signalGen::Create(SignalType signal)
-{
-	switch (signal)
-	{
-	case SIG_Sinusoid:
-		return new sgSin();
-		break;
-	case SIG_Linear:
-		return new sgLin();
-		break;
-	case SIG_Quadratic:
-		return new sgQuad();
-		break;
-	case SIG_Cubic:
-		return new sgCub();
-		break;
-	default:
-		break;
-	}
-}
-
-//main class
-class dataGen
-{
-private:
-	float fXmin, fXmax;
-	int fNSteps;
-	std::vector<point> dataSet;
-	std::vector<signalGen*> signals;
-public:
-	dataGen(float xmin, float xmax, int nSteps)
-	{
-		fXmin = xmin;
-		fXmax = xmax;
-		fNSteps = nSteps;
-	}
-
-	void addGenerator(SignalType st, float arg, std::vector<float>c)
-	{
-		signals.push_back(signalGen::Create(st));
-		int id = signals.size() - 1;
-		signals[id]->setupCalc(arg,c);
-	}
-
-	void makeDataSet()
-	{
-		dataSet.clear();
-		int ng = signals.size();
-		float dx = (fXmax - fXmin) / fNSteps;
-		for (int i = 0; i < fNSteps; i++)
-		{
-			point cData = {0,0};
-			float cx = fXmin + dx * i;
-			float cy = 0;
-			for (int j = 0; j < ng; j++)
-			{
-				signals[j]->setArg(cx);
-
-				point tempData = signals[j]->calcSigPoint();
-				cy = tempData.y;
-
-				cData.x += cx;
-				cData.y += cy;
-			}
-			dataSet.push_back(cData);
-		}
-	}
-
-	void saveDataSet()
-	{
-		std::ofstream writer("dataOut.csv");
-		for (point cp : dataSet)
-		{
-			writer << (int)cp.x*10 << ";" << (int)cp.y*10 << "\n";
-		}
-		writer.close();
-	}
-
-	std::vector<point> getDataSet() { return dataSet; };
-};
-
-//freeglut ops
+//GRAPHICS
 void cbReshape(int x, int y)
 {
-	glViewport(0,0,x,y);
+	glViewport(0, 0, x, y);
 }
 
-
-float normalize(float val, float min, float max)
+float normalize(float coord, float axMin, float axMax)
 {
-	return (val - min) / (max-min);
+	return (coord - axMin) / (axMax - axMin);
 }
 
 float lerp(float a, float b, float t)
 {
-	return a + t * (b-a);
+	return a + t * (b - a);
 }
 
 void cbDisplay()
 {
-
-	float xmin, xmax, ymin, ymax;
-	
-	Singleton * sg = sg->getInstance();
-	sg->findDataExtremes(xmin, xmax, ymin, ymax);
-
-	glClearColor(0, 0, 0, 1);
+	//prepwork
+	Singleton *s = s->getInstance();
+	float xMax = s->refDG->getXMax(),
+		xMin = s->refDG->getXMin(),
+		yMax = s->refDG->getYMax(),
+		yMin = s->refDG->getYMin();
+	//render
 	glClear(GL_COLOR_BUFFER_BIT);
 
 	glMatrixMode(GL_PROJECTION);
 	glLoadIdentity();
 
-	gluOrtho2D(
-		xmin-0.05*(xmax-xmin), xmax+0.05*(xmax-xmin), 
-		ymin-0.05*(ymax-ymin), ymax+0.05*(ymax-ymin)
-	);
+	gluOrtho2D(xMin, xMax, yMin, yMax);
 
 	glMatrixMode(GL_MODELVIEW);
 	glLoadIdentity();
 
 	glLineWidth(3);
-	
+
+	int l = s->refDG->getDataSet().size();
+
 	glBegin(GL_LINE_STRIP);
 
-	for (int i = 0; i < sg->getData().size(); i++)
+	for (int i = 0; i < l; i++)
 	{
-		float cx = sg->getData()[i].x;
-		float cy = sg->getData()[i].y;
-		
-		float cyN = normalize(cy, ymin, ymax);
-		float r = lerp(ymin,ymax,cyN);
-		float g = lerp(ymax, ymin, cyN);
+
+		float cx = s->refDG->getDataSet()[i].x;
+		float cy = s->refDG->getDataSet()[i].y;
+
+		float cyNorm = normalize(cy, yMin, yMax);
+		float r = lerp(0, 1, cyNorm);
+		float g = lerp(1, 0, cyNorm);
 		float b = 0.0f;
 
 		glColor3f(r, g, b);
+
 		glVertex2f(cx, cy);
 	}
 
 	glEnd();
 
 	glutSwapBuffers();
-
 }
 
 
-//main
-int main(int argc, char **argv)
+void initOGL(int argc, char **argv)
 {
-	//init singleton
-	Singleton * sg = sg->getInstance();
-
-	//init freeglut
 	glutInit(&argc, argv);
-
-	//make data
-	dataGen DG(-10, 10, 1000);
-	DG.addGenerator(SIG_Sinusoid, 0, {10,10,0});
-	DG.addGenerator(SIG_Linear, 0, { 0.3f,0 });
-	DG.addGenerator(SIG_Quadratic, 0, { 1,10,0 });
-
-	DG.makeDataSet();
-	DG.saveDataSet();
-
-	sg->setData(DG.getDataSet());
-
-	//draw data
 	glutInitDisplayMode(GLUT_RGB | GLUT_DOUBLE);
 	glutInitWindowSize(800, 600);
-	glutCreateWindow("GLUT window :D");
+	glutCreateWindow("Chart View");
 
 	glutReshapeFunc(cbReshape);
 	glutDisplayFunc(cbDisplay);
 
 	glutMainLoop();
+}
 
-	//the end
-	system("pause");
+int main(int argc, char **argv)
+{
+	Singleton *s = s->getInstance();
+	dataGen DG(-100, 100, 1000);
+	s->refDG = &DG;
+
+	DG.addGenerator(ST_Sin, { 20,1,0,0 });
+	DG.addGenerator(ST_Sin, { 20,0.1,0,0 });
+	DG.addGenerator(ST_Quad, { 0.01,0,0 });
+	DG.genData();
+	DG.extractExtremes();
+
+	initOGL(argc, argv);
 }
